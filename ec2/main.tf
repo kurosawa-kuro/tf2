@@ -1,84 +1,70 @@
-resource "tls_private_key" "example" {
+resource "tls_private_key" "key" {
   algorithm = "RSA"
 }
 
-resource "aws_key_pair" "deployer" {
+resource "aws_key_pair" "key_pair" {
   key_name   = "deployer-key"
-  public_key = tls_private_key.example.public_key_openssh
+  public_key = tls_private_key.key.public_key_openssh
 }
 
-resource "aws_instance" "this" {
-  ami           = "ami-0b828c1c5ac3f13ee"
+resource "aws_instance" "instance" {
+  ami           = "ami-0d52744d6551d851e"
   instance_type = "t2.micro"
-  key_name      = aws_key_pair.deployer.key_name
+  key_name      = aws_key_pair.key_pair.key_name
 
-  vpc_security_group_ids = [aws_security_group.this.id]
+  vpc_security_group_ids = [aws_security_group.sg.id]
+
+  user_data = <<-EOF
+              #!/bin/bash
+              sudo apt-get update -y
+              sudo apt-get install -y software-properties-common
+              sudo apt-add-repository --yes --update ppa:ansible/ansible
+              sudo apt-get install -y ansible
+              sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+              sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+              sudo apt-get update
+              sudo apt-get install -y docker-ce
+              sudo usermod -aG docker $USER
+              sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+              EOF
 
   tags = {
     Name = "terraform-ec2"
   }
 }
 
-resource "aws_security_group" "this" {
+resource "aws_security_group" "sg" {
   name = "terraform-ec2-sg"
 }
 
-resource "aws_security_group_rule" "ssh" {
-  type              = "ingress"
-  from_port         = 22
-  to_port           = 22
-  protocol          = "tcp"
-  cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.this.id
+locals {
+  ingress_ports = ["22", "80", "8080", "3306", "5432"]
 }
 
-resource "aws_security_group_rule" "http" {
+resource "aws_security_group_rule" "ingress_rules" {
+  for_each = toset(local.ingress_ports)
+
   type              = "ingress"
-  from_port         = 80
-  to_port           = 80
+  from_port         = tonumber(each.value)
+  to_port           = tonumber(each.value)
   protocol          = "tcp"
   cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.this.id
+  security_group_id = aws_security_group.sg.id
 }
 
-resource "aws_security_group_rule" "webapp" {
-  type              = "ingress"
-  from_port         = 8080
-  to_port           = 8080
-  protocol          = "tcp"
-  cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.this.id
-}
-
-resource "aws_security_group_rule" "mysql" {
-  type              = "ingress"
-  from_port         = 3306
-  to_port           = 3306
-  protocol          = "tcp"
-  cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.this.id
-}
-
-resource "aws_security_group_rule" "postgresql" {
-  type              = "ingress"
-  from_port         = 5432
-  to_port           = 5432
-  protocol          = "tcp"
-  cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.this.id
-}
-
-resource "aws_security_group_rule" "egress" {
+resource "aws_security_group_rule" "egress_rule" {
   type              = "egress"
   from_port         = 0
   to_port           = 0
   protocol          = "-1"
   cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.this.id
+  security_group_id = aws_security_group.sg.id
 }
 
-output "private_key" {
+output "ec2_private_key" {
   description = "The private key data in PEM format"
-  value       = tls_private_key.example.private_key_pem
+  value       = tls_private_key.key.private_key_pem
   sensitive   = true
 }
